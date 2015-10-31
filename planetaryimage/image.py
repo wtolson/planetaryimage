@@ -1,17 +1,14 @@
 # -*- coding: utf-8 -*-
-import os
-import gzip
-import bz2
-import six
-import pvl
 import numpy
 
+from .decoder import Decoder
+from .encoder import Encoder
+from .specialpixels import DEFAULT_SPECIAL_PIXLES
 
-class PlanetaryImage(object):
-    """A generic image reader. """
 
+class Image(object):
     @classmethod
-    def open(cls, filename):
+    def open(cls, filename_or_stream, compression='infer', decoder=None, **kwargs):
         """ Read an image file from disk
 
         Parameters
@@ -20,23 +17,14 @@ class PlanetaryImage(object):
             Name of file to read as an image file.  This file may be gzip
             (``.gz``) or bzip2 (``.bz2``) compressed.
         """
-        if filename.endswith('.gz'):
-            fp = gzip.open(filename, 'rb')
-            try:
-                return cls(fp, filename, compression='gz')
-            finally:
-                fp.close()
-        elif filename.endswith('.bz2'):
-            fp = bz2.BZ2File(filename, 'rb')
-            try:
-                return cls(fp, filename, compression='bz2')
-            finally:
-                fp.close()
-        else:
-            with open(filename, 'rb') as fp:
-                return cls(fp, filename)
+        return Decoder(compression, decoder).decode(filename_or_stream, **kwargs)
 
-    def __init__(self, stream, filename=None, compression=None):
+    def save(self, filename_or_stream, overwrite=False, compression='infer',
+             encoder=None, **kwargs):
+        return Encoder(overwrite, compression, encoder).encode(self, filename_or_stream, **kwargs)
+
+    def __init__(self, bands, label=None, filename=None, base=0, multiplier=1,
+                 specials=DEFAULT_SPECIAL_PIXLES):
         """Create an Image object.
 
         Parameters
@@ -47,41 +35,40 @@ class PlanetaryImage(object):
 
         filename : string
             an optional filename to attach to the object
-
-        compression : string
-            an optional string that indicate the compression type 'bz2' or 'gz'
         """
-        if isinstance(stream, six.string_types):
-            error_msg = (
-                'A file like object is expected for stream. '
-                'Use %s.open(filename) to open a image file.'
-            )
-            raise TypeError(error_msg % type(self).__name__)
+
+        #: A numpy array representing the image bands
+        self.bands = bands
+
+        # TODO: rename to header and add footer?
+        #: The parsed label header in dictionary form.
+        self.label = label
 
         #: The filename if given, otherwise none.
         self.filename = filename
 
-        self.compression = compression
+        #: An additive factor by which to offset pixel DN.
+        self.base = base
 
-        # TODO: rename to header and add footer?
-        #: The parsed label header in dictionary form.
-        self.label = self._load_label(stream)
+        #: A multiplicative factor by which to scale pixel DN.
+        self.multiplier = multiplier
 
-        #: A numpy array representing the image
-        self.data = self._load_data(stream)
+        #: Special pixel values.
+        self.specials = specials
 
     def __repr__(self):
-        # TODO: pick a better repr
-        return self.filename
+        if self.filename:
+            return '<%s %r>' % (type(self).__name__, self.filename)
+        return super(Image, self).__repr__()
 
     @property
-    def image(self):
-        """An Image like array of ``self.data`` convenient for image processing tasks
+    def pixels(self):
+        """An Image like array of ``self.bands`` convenient for image processing tasks
 
         * 2D array for single band, grayscale image data
         * 3D array for three band, RGB image data
 
-        Enables working with ``self.data`` as if it were a PIL image::
+        Enables working with ``self.bands`` as if it were a PIL image::
 
          >>> from planetaryimage import PDS3Image
          >>> import matplotlib.pyplot as plt
@@ -89,75 +76,74 @@ class PlanetaryImage(object):
          >>> image = PDS3Image.open(testfile)
          >>> _ = plt.imshow(image.image, cmap='gray')
         """
-        if self.bands == 1:
-            return self.data.squeeze()
-        elif self.bands == 3:
-            return numpy.dstack(self.data)
-        # TODO: what about multiband images with 2, and 4+ bands?
+        if len(self.bands) == 1:
+            return self.bands[0]
 
-    @property
-    def bands(self):
-        """Number of image bands."""
-        return self._bands
+        if len(self.bands) in (3, 4):
+            return numpy.dstack(self.bands)
 
-    @property
-    def lines(self):
-        """Number of lines per band."""
-        return self._lines
+        # TODO: what about multiband images with 2, and 5+ bands?
+        raise ValueError('pixel axis only valid for 1, 3 or 4 bands')
 
-    @property
-    def samples(self):
-        """Number of samples per line."""
-        return self._samples
+    def apply_scaling(self, copy=True):
+        """Scale pixel values to there true DN.
 
-    @property
-    def format(self):
-        """Image format."""
-        return self._format
+        :param copy: whether to apply the scaling to a copy of the pixel data
+            and leave the original unaffected
 
-    _data_filename = None
+        :returns: a scaled version of the pixel data
+        """
+        if copy:
+            return self.multiplier * self.bands + self.base
 
-    @property
-    def data_filename(self):
-        """Return detached filename else None."""
-        return self._data_filename
+        if self.multiplier != 1:
+            self.bands *= self.multiplier
 
-    @property
-    def dtype(self):
-        """Pixel data type."""
-        return self._dtype
+        if self.base != 0:
+            self.bands += self.base
 
-    @property
-    def start_byte(self):
-        """Index of the start of the image data (zero indexed)."""
-        return self._start_byte
+        return self.bands
 
-    @property
-    def shape(self):
-        """Tuple of images bands, lines and samples."""
-        return (self.bands, self.lines, self.samples)
+    def convert_specials(self, copy=True):
+        """Convert special pixel values to numpy special pixel values.
 
-    @property
-    def size(self):
-        """Total number of pixels."""
-        return self.bands * self.lines * self.samples
+            =======  =======
+             Type     Numpy
+            =======  =======
+            null     nan
+            lrs      -inf
+            lis      -inf
+            his      inf
+            hrs      inf
+            =======  =======
 
-    def _load_label(self, stream):
-        return pvl.load(stream)
+        :param copy: whether to apply the new special values to a copy of the
+            pixel data and leave the original unaffected
 
-    def _load_data(self, stream):
-        if self.data_filename is not None:
-            return self._load_detached_data()
+        :returns: a numpy array with special values converted to numpy's nan,
+            inf and -inf
+        """
+        if copy:
+            data = self.bands.astype(numpy.float64)
 
-        stream.seek(self.start_byte)
-        return self._decode(stream)
+        elif self.bands.dtype != numpy.float64:
+            data = self.bands = self.bands.astype(numpy.float64)
 
-    def _decode(self, stream):
-        return self._decoder.decode(stream)
+        else:
+            data = self.bands
 
-    def _load_detached_data(self):
-        dirpath = os.path.dirname(self.filename)
-        filename = os.path.abspath(os.path.join(dirpath, self.data_filename))
+        data[data == self.specials.null] = numpy.nan
+        data[data < self.specials.min] = numpy.NINF
+        data[data > self.specials.max] = numpy.inf
 
-        with open(filename, 'rb') as stream:
-            return self._decode(stream)
+        return data
+
+    def specials_mask(self):
+        """Create a pixel map for special pixels.
+
+        :returns: an array where the value is `False` if the pixel is special
+            and `True` otherwise
+        """
+        mask = self.bands >= self.specials.min
+        mask &= self.bands <= self.specials.max
+        return mask
