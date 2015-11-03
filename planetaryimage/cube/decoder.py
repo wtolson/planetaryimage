@@ -12,6 +12,7 @@ from ..plugin import DecoderPlugin
 from .byteorder import CUBE_TO_NUMPY_BYTEORDER
 from .pixeltypes import CUBE_TO_NUMPY_PIXEL_TYPES
 from .specialpixels import SPECIAL_PIXELS
+from .table import TableDecoder
 
 
 class CubeDecoder(DecoderPlugin):
@@ -124,6 +125,18 @@ class CubeDecoder(DecoderPlugin):
             return self._decode_detached_data(self.data_filename)
         return self._decode(self.stream)
 
+    def decode_tables(self):
+        tables = []
+
+        for table in self.label.getlist('Table'):
+            if not isinstance(table, pvl.PVLObject):
+                continue
+
+            decoder = TableDecoder(table, self.stream)
+            tables.append(decoder.decode())
+
+        return tables
+
     def accept(self):
         try:
             return bool(self.label['IsisCube'])
@@ -131,6 +144,11 @@ class CubeDecoder(DecoderPlugin):
             return False
 
     def decode(self):
+        # TODO: decode:
+        # History
+        # NaifKeywords
+        # OriginalLabel
+        # Polygon
         return Image(
             bands=self.decode_bands(),
             label=self.label,
@@ -138,6 +156,7 @@ class CubeDecoder(DecoderPlugin):
             base=self.base,
             multiplier=self.multiplier,
             specials=self.specials,
+            tables=self.decode_tables(),
         )
 
 

@@ -24,7 +24,7 @@ class Image(object):
         return Encoder(overwrite, compression, encoder).encode(self, filename_or_stream, **kwargs)
 
     def __init__(self, bands, label=None, filename=None, base=0, multiplier=1,
-                 specials=DEFAULT_SPECIAL_PIXLES):
+                 specials=DEFAULT_SPECIAL_PIXLES, tables=None):
         """Create an Image object.
 
         Parameters
@@ -55,6 +55,8 @@ class Image(object):
 
         #: Special pixel values.
         self.specials = specials
+
+        self.tables = tables
 
     def __repr__(self):
         if self.filename:
