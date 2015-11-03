@@ -18,8 +18,8 @@ class CubeEncoder(EncoderPlugin):
     def get_byte_order(self, image):
         return NUMPY_TO_CUBE_BYTEORDER[image.bands.dtype.byteorder]
 
-    def create_label(self, image):
-        label = pvl.PVLModule(image.label)
+    def create_label(self, image, label):
+        label = pvl.PVLModule(label)
 
         label['IsisCube'] = pvl.PVLObject({
             'Core': pvl.PVLObject({
@@ -47,9 +47,9 @@ class CubeEncoder(EncoderPlugin):
 
         return label
 
-    def encode(self, image):
+    def encode(self, image, label=None):
         label_size = self.label_size
-        label = self.create_label(image)
+        label = self.create_label(image, label)
 
         while True:
             label['IsisCube']['Core']['StartByte'] = label_size + 1
