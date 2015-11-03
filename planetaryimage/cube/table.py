@@ -63,7 +63,6 @@ class TableDecoder(object):
         return numpy.dtype(columns).newbyteorder(self.byte_order)
 
     def get_fields(self):
-        # TODO: get byte order (ByteOrder)
         for field in self.label.getlist('Field'):
             yield Field(
                 name=field['Name'],
